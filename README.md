@@ -75,7 +75,7 @@ func main() {
 
 ```
 
-More examples can be found in the [examples folder](github.com/amarnathcjd/chatgpt/tree/master/examples).
+More examples can be found in the [examples folder](https//github.com/amarnathcjd/chatgpt/tree/master/examples).
 
 ## License
 
