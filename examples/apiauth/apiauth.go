@@ -13,7 +13,7 @@ func main() {
 	if err := gpt.Start(); err != nil {
 		panic(err)
 	}
-	response, err := gpt.Ask("Hello")
+	response, err := gpt.Ask("Hello", "", "")
 	if err != nil {
 		panic(err)
 	}
