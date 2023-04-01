@@ -62,7 +62,9 @@ import (
 
 func main() {
     client := chatgpt.NewClient(&chatgpt.Config{
-        APIKey: "sk-xxxxxxxx",
+        ApiKey: "sk-xxxxxxxx",
+        // Email: "email",
+        // Password: "password",
     })
     ask, err := client.Ask("Hi, how are you?")
     if err != nil {
