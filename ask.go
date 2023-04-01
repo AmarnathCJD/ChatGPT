@@ -102,7 +102,16 @@ func (c *Client) Ask(question string, conversationID ...string) (*OpenAIResponse
 	}
 
 	// Send the conversation messages to OpenAI API and return its response/error.
-	return c.askOpenAI(conversation.Messages, nil)
+	response, err := c.askOpenAI(conversation.Messages, nil)
+	if err == nil {
+		// If there was no error, add the response message to the conversation and update it.
+		conversation.addMessage(Message{
+			Role:    "assistant",
+			Content: response.GetResponse(),
+		})
+		c.conversations[conversationID[0]] = conversation
+	}
+	return response, err
 }
 
 // askOpenAI makes a POST request to OpenAI's API with the given messages, and returns the response.

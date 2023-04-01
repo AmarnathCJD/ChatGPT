@@ -140,6 +140,11 @@ func (c *Client) GetConversation(id string) (*Conversation, error) {
 	return nil, fmt.Errorf("conversation with id %s not found", id)
 }
 
+// SetConversation sets a specific conversation by ID.
+func (c *Client) SetConversation(id string, conv Conversation) {
+	c.conversations[id] = conv
+}
+
 // ResetConversation deletes a specific conversation by ID, or returns an error if it doesn't exist.
 func (c *Client) ResetConversation(id string) error {
 	if _, ok := c.conversations[id]; ok {
