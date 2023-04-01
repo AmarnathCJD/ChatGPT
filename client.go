@@ -1,4 +1,4 @@
-package chatgpt
+package main
 
 import (
 	"fmt"
@@ -6,31 +6,45 @@ import (
 	"net/url"
 )
 
+const (
+	ApiKeyMode      = iota // Set a value of 0 to ApiKeyMode. This indicates that the user of the program has set up API key properly.
+	AccessTokenMode        // Set a value of 1 to AccessTokenMode. This indicates that the user of the program has set up access token properly.
+)
+
 // Client represents a connection to the OpenAI API.
 // It contains the client's API key, access token, HTTP client, conversation history, settings, and stream details.
 type Client struct {
-	apiKey         string                  // The API key used for authentication with OpenAI.
-	accessToken    string                  // The access token used for conversations with OpenAI.
+	auth           *Auth                   // The authentication object used for authenticating with OpenAI.
 	httpx          *http.Client            // The HTTP client used for sending requests to OpenAI.
 	conversations  map[string]Conversation // A map of conversation IDs to Conversation objects.
 	temperature    float64                 // The sampling temperature for generating text.
-	Engine         string                  // The name of the GPT model being used by this client.
+	engine         string                  // The name of the GPT model being used by this client.
 	initMessage    string                  // The initial message sent to start a new conversation.
+	baseUrl        string                  // Custom base URL for the API.
 	enableInternet bool                    // Whether or not to allow the use of external websites in responses.
 	stream         bool                    // Whether or not to stream response messages as they come in.
 	proxy          *url.URL                // The URL of the proxy server to use for requests.
+	authmode       int                     // The authentication mode used by this client.
+	ispaid         bool                    // Whether or not the account is a paid account.
+	logger         *Logger                 // The logger used for logging messages.
 }
 
 // Config represents the configuration options for a connection to the OpenAI API.
 // Each field is optional and can be omitted from the JSON representation of the config object.
 type Config struct {
-	APIKey         string   `json:"api_key,omitempty"`         // The API key used for authentication with OpenAI.
+	ApiKey         string   `json:"api_key,omitempty"`         // The API key used for authentication with OpenAI.
+	Email          string   `json:"email,omitempty"`           // The email used for authentication with OpenAI.
+	Password       string   `json:"password,omitempty"`        // The password used for authentication with OpenAI.
 	AccessToken    string   `json:"access_token,omitempty"`    // The access token used for conversations with OpenAI.
 	Engine         string   `json:"engine,omitempty"`          // The name of the GPT model being used.
 	InitMessage    string   `json:"init_message,omitempty"`    // The initial message sent to start a new conversation.
+	BaseURL        string   `json:"base_url,omitempty"`        // Custom base URL for the OpenAI API.
 	Temperature    float64  `json:"temperature,omitempty"`     // The sampling temperature for generating text.
+	LogLevel       LogLevel `json:"log_level,omitempty"`       // The log level to use for logging messages.
+	IsPaid         bool     `json:"is_paid,omitempty"`         // Whether or not the account is a paid account.
 	EnableInternet bool     `json:"enable_internet,omitempty"` // Whether or not to allow the use of external websites in responses.
 	Stream         bool     `json:"stream,omitempty"`          // Whether or not to stream response messages as they come in.
+	DisableCache   bool     `json:"disable_cache,omitempty"`   // Whether or not to disable caching of access tokens.
 	Proxy          *url.URL `json:"proxy,omitempty"`           // The URL of the proxy server to use for requests.
 }
 
@@ -39,23 +53,42 @@ func NewClient(config *Config) *Client {
 	// Initialize a new client with default values, then update its fields
 	// based on the provided configuration.
 	client := &Client{
-		apiKey:         config.APIKey,
-		accessToken:    config.AccessToken,
+		auth: &Auth{
+			email:       config.Email,
+			password:    config.Password,
+			apiKey:      config.ApiKey,
+			accessToken: config.AccessToken,
+			enableCache: !config.DisableCache,
+		},
 		conversations:  make(map[string]Conversation),
-		Engine:         config.Engine,
+		engine:         config.Engine,
+		baseUrl:        config.BaseURL,
 		temperature:    config.Temperature,
 		enableInternet: config.EnableInternet,
 		stream:         config.Stream,
 		httpx:          &http.Client{},
 		initMessage:    config.InitMessage,
+		ispaid:         config.IsPaid,
+		logger:         &Logger{},
 	}
 
 	// Set default values for missing fields in the configuration.
 	if client.temperature == 0 {
 		client.temperature = 0.9
 	}
-	if client.Engine == "" {
-		client.Engine = "gpt-3.5-turbo" // default engine
+	if client.engine == "" {
+		client.engine = "gpt-3.5-turbo" // default engine
+	}
+	// set the default base URL if one is not specified in the configuration.
+	if client.baseUrl == "" {
+		client.baseUrl = "https://bypass.churchless.tech/api/"
+	}
+
+	// Set the log level if one is specified in the configuration.
+	if config.LogLevel != 0 {
+		client.logger.SetLevel(config.LogLevel)
+	} else {
+		client.logger.SetLevel(LogLevelInfo)
 	}
 
 	// Set up a proxy if one is specified in the configuration.
@@ -69,17 +102,18 @@ func NewClient(config *Config) *Client {
 
 // SetAPIKey sets the API key used for authentication.
 func (c *Client) SetAPIKey(apiKey string) {
-	c.apiKey = apiKey
+	c.auth.apiKey = apiKey
 }
 
 // SetAccessToken sets the access token used for conversations.
 func (c *Client) SetAccessToken(accessToken string) {
-	c.accessToken = accessToken
+	c.auth.accessToken = accessToken
 }
 
 // SetEngine sets the GPT model being used.
 func (c *Client) SetEngine(engine string) {
-	c.Engine = engine
+	c.logger.Debug(fmt.Sprintf("Setting engine to %s", engine))
+	c.engine = engine
 }
 
 // SetEnableInternet sets whether or not external websites can be accessed in responses.
@@ -99,17 +133,17 @@ func (c *Client) SetProxy(proxy *url.URL) {
 
 // GetAPIKey returns the API key used for authentication.
 func (c *Client) GetAPIKey() string {
-	return c.apiKey
+	return c.auth.apiKey
 }
 
 // GetAccessToken returns the access token used for conversations.
 func (c *Client) GetAccessToken() string {
-	return c.accessToken
+	return c.auth.accessToken
 }
 
 // GetEngine returns the name of the GPT model being used.
 func (c *Client) GetEngine() string {
-	return c.Engine
+	return c.engine
 }
 
 // GetEnableInternet returns true if external websites can be accessed in responses.
@@ -157,4 +191,135 @@ func (c *Client) ResetConversation(id string) error {
 // ResetConversations deletes all conversations from memory.
 func (c *Client) ResetConversations() {
 	c.conversations = make(map[string]Conversation)
+	c.logger.Info("All conversations have been reset.")
+}
+
+// PingProxy checks if the proxy server is reachable.
+func (c *Client) PingProxy() error {
+	if c.proxy == nil {
+		return fmt.Errorf("no proxy server set")
+	}
+	_, err := c.httpx.Get(c.proxy.String())
+	return err
+}
+
+// CheckCredentials checks that the client has been initialized with credentials.
+// If not, it returns an error.
+//
+//	Multiple credentials can be provided, but they are used in the following order:
+//	 1. API key
+//	 2. Email and password
+//	 3. Access token
+func (c *Client) CheckCredentials() error {
+	if c.auth.apiKey == "" && (c.auth.email == "" || c.auth.password == "") && c.auth.accessToken == "" {
+		return fmt.Errorf("no credentials provided, please set an API key, email and password, or access token")
+	}
+	if (c.auth.email != "" && c.auth.password == "") || (c.auth.email == "" && c.auth.password != "") {
+		return fmt.Errorf("email and password must be set together")
+	}
+	return nil
+}
+
+// Start initializes the client by checking credentials and authenticating with the OpenAI API.
+func (c *Client) Start() error {
+	// Check that the client has been initialized with credentials.
+	if err := c.CheckCredentials(); err != nil {
+		return err
+	}
+
+	if c.proxy != nil {
+		// check if proxy is alive, ping it
+		// if not, return error
+		if err := c.PingProxy(); err != nil {
+			return err
+		}
+		c.logger.Debug("Proxy server is alive")
+	}
+	if c.auth.apiKey != "" {
+		c.authmode = ApiKeyMode
+		c.logger.Info("Starting client with API key")
+	} else if c.auth.email != "" && c.auth.password != "" {
+		// Authenticate with the OpenAI API and set the access token.
+		c.logger.Info("Starting client with email and password")
+		accessToken, err := c.auth.GetAccessToken()
+		if err != nil {
+			return err
+		}
+		c.logger.Info("Successfully authenticated with OpenAI API")
+		c.auth.accessToken = accessToken
+		c.authmode = AccessTokenMode
+		if !c.ispaid {
+			c.engine = "text-davinci-002-render-sha"
+			c.logger.Debug("Using free engine: " + c.engine)
+		}
+	} else if c.auth.accessToken != "" {
+		c.authmode = AccessTokenMode
+		if c.auth.enableCache {
+			if err := c.auth.cacheAccessToken(); err != nil {
+				return err
+			}
+		}
+		if !c.ispaid {
+			c.engine = "text-davinci-002-render-sha"
+			c.logger.Debug("Using free engine: " + c.engine)
+		}
+	}
+	c.auth.clientStarted = true
+	return nil
+}
+
+// Logger Module
+
+// Logger is a simple logger that can be used to log messages to the console.
+type Logger struct {
+	// The minimum level of messages to log.
+	Level LogLevel
+}
+
+func (l *Logger) SetLevel(level LogLevel) {
+	l.Level = level
+}
+
+// LogLevel is an enum for the different log levels.
+type LogLevel int
+
+const (
+	// LogLevelNone disables all logging.
+	LogLevelNone LogLevel = iota
+	// LogLevelDebug logs debug messages.
+	LogLevelDebug
+	// LogLevelInfo logs informational messages.
+	LogLevelInfo
+	// LogLevelWarn logs warning messages.
+	LogLevelWarn
+	// LogLevelError logs error messages.
+	LogLevelError
+)
+
+// Debug logs a debug message.
+func (l *Logger) Debug(msg string) {
+	if l.Level <= LogLevelDebug {
+		fmt.Println("chatGPT - Debug - ", msg)
+	}
+}
+
+// Info logs an informational message.
+func (l *Logger) Info(msg string) {
+	if l.Level <= LogLevelInfo {
+		fmt.Println("chatGPT - Info - ", msg)
+	}
+}
+
+// Warn logs a warning message.
+func (l *Logger) Warn(msg string) {
+	if l.Level <= LogLevelWarn {
+		fmt.Println("chatGPT - Warning - ", msg)
+	}
+}
+
+// Error logs an error message.
+func (l *Logger) Error(msg string) {
+	if l.Level <= LogLevelError {
+		fmt.Println("chatGPT - Error - ", msg)
+	}
 }

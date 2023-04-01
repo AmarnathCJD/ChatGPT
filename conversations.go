@@ -1,4 +1,4 @@
-package chatgpt
+package main
 
 import "encoding/json"
 

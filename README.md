@@ -1,7 +1,8 @@
 # CHATGPT
 
-A Wrapper for the CHATGPT model from OpenAI.
-Purely built on Golang.
+`CHATGPT` is a wrapper for the `CHATGPT` model from OpenAI purely built on Golang. The application has various features, including asking questions and getting responses, remembering the context of the conversation, exporting the conversation to a file, and importing the conversation from a file. 
+
+The app also allows users to get the conversation history, use multiple models such as `davinci`, `gpt 3`, `gpt 3.5`, and `gpt 4`. Other features include API Key Authentication, Customizable temperature of the model, Inbuilt Tokenizer for the model, and http/https proxy support for the client. 
 
 ## Table of Contents
 
@@ -12,38 +13,43 @@ Purely built on Golang.
   - [Usage](#usage)
   - [License](#license)
 
-
 ## Features
+Here are some notable features of the wrapper:
 
-- [x] Ask a question and get a response
-- [x] Remember the context of the conversation
-- [x] Export the conversation to a file
-- [x] Import the conversation from a file
-- [x] Get the conversation history
-- [x] Models: `davinci`, `gpt 3`, `gpt 3.5`, `gpt 4`
-- [x] API Key Authentication
-- [x] Customizable temperature of the model
-- [x] Inbuilt Tokenizer for the model
-- [x] http/https proxy support for the client
+- Authenticate using the API Key, which can be obtained from the [OpenAI Dashboard](https://beta.openai.com/).
+- Authenticate using the `access_token` or `email/password`.
+- Cache the authentication token for future use.
+- Remember the context of the conversation.
+- Export the conversation to a file.
+- Get the conversation history.
+- Models: `davinci`, `gpt 3`, `gpt 3.5`, `gpt 4`.
+- API Key Authentication.
+- Customizable temperature of the model.
+- Inbuilt Tokenizer for the model.
+- https Proxy support for the client.
 
 ## TODO
+Below are some things that need to be added to the application:
 
-- [ ] Add support for the `top_p` parameter
-- [ ] Add support for authentication using the `access_token`
-- [ ] Add support for streaming the response via a channel
-- [ ] Add support for email/password authentication
+- Implement the `internet plugin` for the `CHATGPT` model.
+- Add support for the `top_p` parameter.
+- Add support for streaming the response via a channel.
 
 ## Documentation
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/amarnathcjd/chatgpt.svg)](https://pkg.go.dev/github.com/amarnathcjd/chatgpt)
+You can find the complete documentation for the `CHATGPT` package at [Go Reference](https://pkg.go.dev/github.com/amarnathcjd/chatgpt).
 
 ## Installation
+
+You can install `CHATGPT` by running the following command on your terminal:
 
 ```bash
 go get github.com/amarnathcjd/chatgpt
 ```
 
 ## Usage
+
+Here is an example of how to use `CHATGPT` package:
 
 ```go
 package main
@@ -67,6 +73,8 @@ func main() {
 
 ```
 
+More examples can be found in the [examples folder](github.com/amarnathcjd/chatgpt/tree/master/examples).
+
 ## License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+`CHATGPT` is released under the terms of the MIT License. For more information, please refer to the [License](https://choosealicense.com/licenses/mit/) page.
