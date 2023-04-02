@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/amarnathcjd/chatgpt"
@@ -13,7 +14,8 @@ func main() {
 	if err := gpt.Start(); err != nil {
 		panic(err)
 	}
-	response, err := gpt.Ask("Hello", "", "")
+	ctx := context.Background()
+	response, err := gpt.Ask(ctx, "Hello")
 	if err != nil {
 		panic(err)
 	}

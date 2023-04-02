@@ -2,11 +2,13 @@ package chatgpt
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -16,6 +18,13 @@ const OPENAI_HOST = "https://api.openai.com/v1/chat/completions"
 
 // The default "system" message when starting a new conversation.
 const DEFAULT_INIT_MESSAGE = "You are chatGPT, trained on a very huge dataset of conversations. Act conversationally"
+
+type AskOpts struct {
+	// The conversation ID to use for this request. If not specified, a new conversation ID will be generated.
+	ConversationID string
+	// The parent ID to use for this request. If not specified, a new parent ID will be generated.
+	ParentID string
+}
 
 // Choice represents a possible response and its finish reason from OpenAI's API.
 type Choice struct {
@@ -40,10 +49,10 @@ type OpenAIResponse struct {
 // GetResponse returns the response message from the OpenAI API response.
 
 func (r *OpenAIResponse) GetResponse() string {
-	if len(r.Choices) > 0 {
-		return r.Choices[0].Message.Content
+	if len(r.Choices) == 0 {
+		return ""
 	}
-	return ""
+	return r.Choices[0].Message.Content
 }
 
 // OpenAIError represents an error returned by OpenAI's API.
@@ -76,19 +85,29 @@ func (e *ChatError) Error() string {
 }
 
 // Ask sends a question to OpenAI API using the specified conversation ID or the default one.
-func (c *Client) Ask(question string, conversationID, parentID string) (*ChatResponse, error) { // TODO: Add support for streamChannel
+func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*ChatResponse, error) { // TODO: Add support for streamChannel
+	if !c.auth.clientStarted {
+		return nil, fmt.Errorf("client is not started, call Start() first")
+	}
 	if c.authmode == AccessTokenMode {
-		return c.AskWithAccessToken(question, conversationID, parentID)
+		return c.AskWithAccessToken(ctx, prompt, askOpts...)
 	}
 	var conversation Conversation
+	var conversationId string
+
+	if len(askOpts) > 0 {
+		if askOpts[0].ConversationID != "" {
+			conversationId = askOpts[0].ConversationID
+		}
+	}
 
 	// Use "default" as the conversation ID if none is provided.
-	if conversationID == "" {
-		conversationID = "default"
+	if conversationId == "" {
+		conversationId = "default"
 	}
 
 	// If there's no existing conversation with the given ID, create a new one with a system message.
-	if _, ok := c.conversations[conversationID]; !ok {
+	if _, ok := c.conversations[conversationId]; !ok {
 		conversation = Conversation{}
 		initMessage := Message{
 			Role:    "system",
@@ -99,46 +118,46 @@ func (c *Client) Ask(question string, conversationID, parentID string) (*ChatRes
 			initMessage.Content = c.initMessage
 		}
 		conversation.initMessage(initMessage)
-		c.conversations[conversationID] = conversation
+		c.conversations[conversationId] = conversation
 	} else { // Otherwise, retrieve the existing conversation and add the user's message to it.
-		conversation = c.conversations[conversationID]
+		conversation = c.conversations[conversationId]
 		conversation.addMessage(Message{
 			Role:    "user",
-			Content: question,
+			Content: prompt,
 		})
-		c.conversations[conversationID] = conversation
+		c.conversations[conversationId] = conversation
 	}
 
 	// Check the number of tokens in the conversation and tokenize it if necessary.
 	tokens := conversation.getTokenCount()
 	if tokens > getEngineTokenLimit(c.engine) {
 		conversation.tokenizeMessage(c.engine)
-		c.conversations[conversationID] = conversation
+		c.conversations[conversationId] = conversation
 	}
 
 	// Send the conversation messages to OpenAI API and return its response/error.
-	response, err := c.askOpenAI(conversation.Messages, nil)
+	response, err := c.askOpenAI(ctx, conversation.Messages, nil)
 	if err == nil {
 		// If there was no error, add the response message to the conversation and update it.
 		conversation.addMessage(Message{
 			Role:    "assistant",
 			Content: response.GetResponse(),
 		})
-		c.conversations[conversationID] = conversation
+		c.conversations[conversationId] = conversation
 	}
 	return &ChatResponse{
 		Message:        response.GetResponse(),
-		ConversationID: conversationID,
+		ConversationID: conversationId,
 		Model:          c.engine,
 	}, err
 }
 
 // askOpenAI makes a POST request to OpenAI's API with the given messages, and returns the response.
 // If there is an HTTP error or a non-200 status code, an error is returned instead.
-func (c *Client) askOpenAI(messages []Message, streamChannel chan string) (*OpenAIResponse, error) {
+func (c *Client) askOpenAI(ctx context.Context, messages []Message, streamChannel chan string) (*OpenAIResponse, error) {
 	// Create a new request with the payload and headers set.
-	req, _ := http.NewRequest("POST", OPENAI_HOST, strings.NewReader(c.makePayload(messages)))
-	c.setHeaders(req)
+	req, _ := http.NewRequestWithContext(ctx, "POST", OPENAI_HOST, strings.NewReader(c.makePayload(messages)))
+	c.setHeaders(req, c.auth.apiKey)
 
 	// Send the request and handle the response.
 	if resp, err := c.httpx.Do(req); err != nil {
@@ -188,8 +207,8 @@ func (c *Client) makePayload(messages []Message) string {
 }
 
 // setHeaders sets the Authorization and Content-Type headers on the given request.
-func (c *Client) setHeaders(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.auth.apiKey)
+func (c *Client) setHeaders(req *http.Request, key string) {
+	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 }
 
@@ -206,152 +225,157 @@ func getEngineTokenLimit(engine string) int {
 }
 
 // AskWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
-func (c *Client) AskWithAccessToken(question string, conversationID, parentID string) (*ChatResponse, error) {
-	// Construct the base URL of the Custom API endpoint.
-	var base_url = c.baseUrl + "conversation"
+func (c *Client) AskWithAccessToken(ctx context.Context, prompt string, askOpts ...AskOpts) (*ChatResponse, error) {
+	_req_url := c.baseUrl + "conversation"
 
-	// Create a data map to hold the message information and other metadata.
+	var conversationId string
+	var parentId string
+
+	if len(askOpts) > 0 {
+		if askOpts[0].ConversationID != "" {
+			conversationId = askOpts[0].ConversationID
+		}
+		if askOpts[0].ParentID != "" {
+			parentId = askOpts[0].ParentID
+		}
+	}
+
 	data := map[string]interface{}{
-		"action": "next", // This indicates that we're requesting the next response from the chat server.
-		"messages": []map[string]interface{}{ // An array of message objects consisting of user input.
+		"action": "next",
+		"messages": []map[string]interface{}{
 			{
-				"id":   genUUID(), // Generate a unique ID for this message.
-				"role": "user",    // Set the role of this message to "user".
-				"content": map[string]interface{}{ // The content of the message object.
-					"content_type": "text",             // The type of message content - text in this case.
-					"parts":        []string{question}, // The actual message content - an array of strings.
+				"id":   genUUID(),
+				"role": "user",
+				"content": map[string]interface{}{
+					"content_type": "text",
+					"parts":        []string{prompt},
 				},
 			},
 		},
-		"model": c.engine, // Specify the GPT-3 model to use for generating the response.
+		"model": c.engine,
 	}
 
-	// Add conversationID and parentID metadata to the data object if they were specified.
-	if conversationID != "" {
-		data["conversation_id"] = conversationID
+	if conversationId != "" {
+		data["conversation_id"] = conversationId
 	}
-	if parentID != "" {
-		data["parent_message_id"] = parentID
+
+	if parentId != "" {
+		data["parent_message_id"] = parentId
 	} else {
-		parentID = genUUID()
-		data["parent_message_id"] = parentID
+		data["parent_message_id"] = genUUID()
 	}
 
-	// Convert the data map to a JSON string.
-	jsonified, _ := json.Marshal(data)
+	payload, _ := json.Marshal(data)
+	req, err := http.NewRequestWithContext(ctx, "POST", _req_url, strings.NewReader(string(payload)))
+	if err != nil {
+		return nil, fmt.Errorf("error in get %s: %w", _req_url, err)
+	}
+	c.setHeaders(req, c.auth.accessToken)
 
-	// Create an HTTP POST request with the JSON payload.
-	req, _ := http.NewRequest("POST", base_url, io.NopCloser(strings.NewReader(string(jsonified))))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error in get %s: %w", _req_url, err)
+	}
 
-	// Set the authorization and content-type headers.
-	req.Header.Set("authorization", "Bearer "+c.auth.accessToken)
-	req.Header.Set("content-type", "application/json")
+	defer resp.Body.Close()
 
-	// Send the request and handle the response.
-	if resp, err := c.httpx.Do(req); err != nil {
-		return nil, err
-	} else {
-		defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
 
-		// If the response status code is 200 OK, parse the response and return it.
-		if resp.StatusCode == 200 {
-			parsedResp, err := c.parseResponse(resp)
-			if err != nil {
-				return nil, err
-			}
-			parsedResp.ParentID = parentID
-			return parsedResp, nil
-		} else {
-			b, _ := io.ReadAll(resp.Body)
-			return nil, &ChatError{
-				Message: string(b),
-				Code:    resp.StatusCode,
-			}
+		msgs, err := c.parseResponse(resp)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(msgs) > 0 {
+			return &ChatResponse{
+				Message:        msgs[len(msgs)-1].Text,
+				ConversationID: msgs[len(msgs)-1].ConversationID,
+				ParentID:       msgs[len(msgs)-1].ParentID,
+			}, nil
 		}
 	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return nil, &ChatError{
+		Message: string(body),
+		Code:    resp.StatusCode,
+	}
 }
 
-// RawResponse is a struct representing the raw JSON response received from a chat server.
-type RawResponse struct {
-	// The message object containing the ID and content of the response.
-	Message struct {
-		ID      string   `json:"id"` // The unique identifier for the message.
-		Content struct { // The raw message content.
-			ContentType string   `json:"content_type"` // The content type of the message, e.g., text, audio, etc.
-			Parts       []string `json:"parts"`        // The parts that make up the actual message content.
-		} `json:"content"`
-	} `json:"message"`
-
-	// The conversation ID associated with the response.
-	ConversationID string `json:"conversation_id"`
-
-	// Any error information associated with the response.
-	Error any `json:"error"`
+type RawMessage struct {
+	Text           string
+	ConversationID string
+	ParentID       string
 }
 
-// parseResponse parses the raw string response received from the chat server and returns a ChatResponse object
-// containing the extracted message text and conversation ID, if everything went well.
-func (c *Client) parseResponse(resp *http.Response) (*ChatResponse, error) {
-	// Initialize some variables for parsing the response.
-	last_message := ""
-	scanner := bufio.NewScanner(resp.Body)
-
-	// Iterate over each line of the response.
+func (c *Client) parseResponse(response *http.Response) ([]*RawMessage, error) {
+	defer response.Body.Close()
+	messages := make([]*RawMessage, 0)
+	scanner := bufio.NewScanner(response.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
-
-		// Ignore empty lines and event-type headers.
 		if line == "" || strings.HasPrefix(line, "event: ") {
 			continue
 		}
-
-		// Trim the "data: " prefix off the line and exit the loop if line contains the "[DONE]" sentinel value.
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		if strings.Contains(line, `{"detail":}`) {
+			message := regexp.MustCompile(`{"detail":.*}`).FindString(line)
+			return nil, fmt.Errorf(message)
+		}
 		line = strings.TrimPrefix(line, "data: ")
 		if line == "[DONE]" {
 			break
 		}
-
-		// Store the last non-empty line read so far.
-		last_message = line
-	}
-
-	// Parse the extracted (last) line as a RawResponse object.
-	var parsedLine RawResponse
-	if err := json.Unmarshal([]byte(last_message), &parsedLine); err != nil {
-		return nil, err
-	}
-
-	// Handle errors using possible error message content and return appropriate ChatError objects.
-	if parsedLine.Error != nil {
-		return nil, &ChatError{
-			Message: fmt.Sprintf("%v", parsedLine.Error),
-			Code:    500,
+		var parsedLine map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &parsedLine); err != nil || !checkFields(parsedLine) {
+			continue
+		}
+		content := parsedLine["message"].(map[string]interface{})["content"].(map[string]interface{})
+		if messageContextType, ok := content["content_type"].(string); ok && messageContextType == "text" {
+			parts := content["parts"].([]interface{})
+			if len(parts) > 0 {
+				message := fmt.Sprintf("%v", parts[0])
+				conversationID := parsedLine["conversation_id"].(string)
+				parentID := parsedLine["message"].(map[string]interface{})["id"].(string)
+				messages = append(messages, &RawMessage{
+					ConversationID: conversationID,
+					ParentID:       parentID,
+					Text:           message,
+				})
+			}
+		} else {
+			c.logger.Warn("Unsupported message type: " + messageContextType)
 		}
 	}
-	if parsedLine.Message.Content.ContentType != "text" {
-		return nil, &ChatError{
-			Message: "Message content type not supported, " + parsedLine.Message.Content.ContentType,
-			Code:    500,
-		}
-	}
-	if len(parsedLine.Message.Content.Parts) == 0 {
-		return nil, &ChatError{
-			Message: "No message content",
-			Code:    500,
-		}
-	}
+	return messages, nil
+}
 
-	// Return a new ChatResponse object with the extracted message text and conversation ID.
-	return &ChatResponse{Message: parsedLine.Message.Content.Parts[0], ConversationID: parsedLine.ConversationID}, nil
+func checkFields(parsedLine map[string]interface{}) bool {
+	message, messageExists := parsedLine["message"].(map[string]interface{})
+	if !messageExists {
+		return false
+	}
+	content, contentExists := message["content"].(map[string]interface{})
+	if !contentExists {
+		return false
+	}
+	parts, partsExists := content["parts"].([]interface{})
+	if !partsExists {
+		return false
+	}
+	if len(parts) == 0 {
+		return false
+	}
+	return true
 }
 
 // genUUID generates a random UUID.
 func genUUID() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
 		return ""
 	}
-	uuid := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
-	return uuid
+	return fmt.Sprintf("%x-%x-%x-%x-%x", uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:])
 }

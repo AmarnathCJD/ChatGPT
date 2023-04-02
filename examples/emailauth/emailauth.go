@@ -1,6 +1,7 @@
 package examples
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/amarnathcjd/chatgpt"
@@ -14,7 +15,8 @@ func main() {
 	if err := gpt.Start(); err != nil {
 		panic(err)
 	}
-	response, err := gpt.Ask("Hello", "", "")
+	ctx := context.Background()
+	response, err := gpt.Ask(ctx, "Hello")
 	if err != nil {
 		panic(err)
 	}
@@ -23,7 +25,7 @@ func main() {
 
 	fmt.Println(response)
 
-	response, err = gpt.Ask("How are you?", convID, parentID)
+	response, err = gpt.Ask(ctx, "How are you?", gpt.AskOpts{ConversationID: convID, ParentID: parentID})
 	// continue the conversation with the same conversation ID and parent ID
 	// to keep the conversation going
 

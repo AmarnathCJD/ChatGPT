@@ -56,6 +56,7 @@ package main
 
 import (
     "fmt"
+    "context"
 
     "github.com/amarnathcjd/chatgpt"
 )
@@ -66,11 +67,11 @@ func main() {
         // Email: "email",
         // Password: "password",
     })
-    ask, err := client.Ask("Hi, how are you?")
+    ask, err := client.Ask(context.Background(), "Hello, nice to meet you")
     if err != nil {
         panic(err)
     }
-    fmt.Println("ChatGPT: ", ask)
+    fmt.Println("ChatGPT: ", ask.Message)
 }
 
 ```

@@ -2,6 +2,7 @@ package chatgpt
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 )
@@ -223,6 +224,7 @@ func (c *Client) CheckCredentials() error {
 // Start initializes the client by checking credentials and authenticating with the OpenAI API.
 func (c *Client) Start() error {
 	// Check that the client has been initialized with credentials.
+	c.auth.loadCachedAccessToken()
 	if err := c.CheckCredentials(); err != nil {
 		return err
 	}
@@ -237,21 +239,7 @@ func (c *Client) Start() error {
 	}
 	if c.auth.apiKey != "" {
 		c.authmode = ApiKeyMode
-		c.logger.Info("Starting client with API key")
-	} else if c.auth.email != "" && c.auth.password != "" {
-		// Authenticate with the OpenAI API and set the access token.
-		c.logger.Info("Starting client with email and password")
-		accessToken, err := c.auth.GetAccessToken()
-		if err != nil {
-			return err
-		}
-		c.logger.Info("Successfully authenticated with OpenAI API")
-		c.auth.accessToken = accessToken
-		c.authmode = AccessTokenMode
-		if !c.ispaid {
-			c.engine = "text-davinci-002-render-sha"
-			c.logger.Debug("Using free engine: " + c.engine)
-		}
+		c.logger.Info("Starting client with API key Authentication")
 	} else if c.auth.accessToken != "" {
 		c.authmode = AccessTokenMode
 		if c.auth.enableCache {
@@ -259,6 +247,21 @@ func (c *Client) Start() error {
 				return err
 			}
 		}
+		c.logger.Info("Starting client with access token Authentication")
+		if !c.ispaid {
+			c.engine = "text-davinci-002-render-sha"
+			c.logger.Debug("Using free engine: " + c.engine)
+		}
+	} else if c.auth.email != "" && c.auth.password != "" {
+		// Authenticate with the OpenAI API and set the access token.
+		c.logger.Info("Starting client with email and password Authentication")
+		accessToken, err := c.auth.GetAccessToken()
+		if err != nil {
+			return err
+		}
+		c.logger.Info("Successfully authenticated with OpenAI")
+		c.auth.accessToken = accessToken
+		c.authmode = AccessTokenMode
 		if !c.ispaid {
 			c.engine = "text-davinci-002-render-sha"
 			c.logger.Debug("Using free engine: " + c.engine)
@@ -299,27 +302,27 @@ const (
 // Debug logs a debug message.
 func (l *Logger) Debug(msg string) {
 	if l.Level <= LogLevelDebug {
-		fmt.Println("chatGPT - Debug - ", msg)
+		log.Println("chatGPT - Debug - ", msg)
 	}
 }
 
 // Info logs an informational message.
 func (l *Logger) Info(msg string) {
 	if l.Level <= LogLevelInfo {
-		fmt.Println("chatGPT - Info - ", msg)
+		log.Println("chatGPT - Info - ", msg)
 	}
 }
 
 // Warn logs a warning message.
 func (l *Logger) Warn(msg string) {
 	if l.Level <= LogLevelWarn {
-		fmt.Println("chatGPT - Warning - ", msg)
+		log.Println("chatGPT - Warning - ", msg)
 	}
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string) {
 	if l.Level <= LogLevelError {
-		fmt.Println("chatGPT - Error - ", msg)
+		log.Println("chatGPT - Error - ", msg)
 	}
 }
