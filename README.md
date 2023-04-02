@@ -92,5 +92,3 @@ More examples can be found in the [examples folder](https//github.com/amarnathcj
 ## License
 
 `CHATGPT` is released under the terms of the GPT-3 License. See [LICENSE](https://github.com/amarnathcjd/chatgpt/blob/master/LICENSE) for more information or see https://openai.com/terms.
-
-[]: # Path: LICENSE
