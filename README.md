@@ -80,7 +80,7 @@ func main() {
     client := chatgpt.NewClient(&chatgpt.Config{
         Email: "email@domain.com",
         Password: "password", // or ApiKey: "sk-xxxxxxxxxxxx",
-    }, "session-1")
+    })
     if err := client.Start(); err != nil {
         panic(err) 
     }
