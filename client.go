@@ -50,7 +50,8 @@ type Config struct {
 }
 
 // NewClient creates a new OpenAI API client with the given configuration.
-func NewClient(config *Config) *Client {
+// sessionName is an optional parameter that can be used to identify the client in case of multiple clients.
+func NewClient(config *Config, sessionName ...string) *Client {
 	// Initialize a new client with default values, then update its fields
 	// based on the provided configuration.
 	client := &Client{
@@ -92,6 +93,13 @@ func NewClient(config *Config) *Client {
 		client.logger.SetLevel(LogLevelInfo)
 	}
 
+	// Set the session name if one is specified.
+	if len(sessionName) > 0 {
+		client.auth.sessionName = sessionName[0]
+	} else {
+		client.auth.sessionName = "default"
+	}
+
 	// Set up a proxy if one is specified in the configuration.
 	if config.Proxy != nil {
 		client.httpx.Transport = &http.Transport{
@@ -99,6 +107,17 @@ func NewClient(config *Config) *Client {
 		}
 	}
 	return client
+}
+
+// SetEmailAndPassword sets the email and password used for authentication.
+func (c *Client) SetEmailAndPassword(email, password string) {
+	c.auth.email = email
+	c.auth.password = password
+}
+
+// SetSessionName sets the session name used for authentication.
+func (c *Client) SetSessionName(sessionName string) {
+	c.auth.sessionName = sessionName
 }
 
 // SetAPIKey sets the API key used for authentication.
@@ -277,8 +296,11 @@ func (c *Client) Start() error {
 type Logger struct {
 	// The minimum level of messages to log.
 	Level LogLevel
+	// sessionName is the name of the session.
+	sessionName string
 }
 
+// SetLevel sets the minimum level of messages to log.
 func (l *Logger) SetLevel(level LogLevel) {
 	l.Level = level
 }
@@ -299,30 +321,38 @@ const (
 	LogLevelError
 )
 
+// SessionName returns the name of the session, or an empty string if it's the default session.
+func (l *Logger) SessionName() string {
+	if l.sessionName == "default" {
+		return ""
+	}
+	return l.sessionName
+}
+
 // Debug logs a debug message.
 func (l *Logger) Debug(msg string) {
 	if l.Level <= LogLevelDebug {
-		log.Println("chatGPT - Debug - ", msg)
+		log.Println("chatGPT ", l.SessionName(), " - Debug - ", msg)
 	}
 }
 
 // Info logs an informational message.
 func (l *Logger) Info(msg string) {
 	if l.Level <= LogLevelInfo {
-		log.Println("chatGPT - Info - ", msg)
+		log.Println("chatGPT ", l.SessionName(), " - Info - ", msg)
 	}
 }
 
 // Warn logs a warning message.
 func (l *Logger) Warn(msg string) {
 	if l.Level <= LogLevelWarn {
-		log.Println("chatGPT - Warning - ", msg)
+		log.Println("chatGPT ", l.SessionName(), " - Warn - ", msg)
 	}
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string) {
 	if l.Level <= LogLevelError {
-		log.Println("chatGPT - Error - ", msg)
+		log.Println("chatGPT ", l.SessionName(), " - Error - ", msg)
 	}
 }

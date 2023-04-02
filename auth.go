@@ -3,7 +3,6 @@ package chatgpt
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -28,6 +27,8 @@ type Auth struct {
 	enableCache bool
 	// clientStarted keeps track of whether or not the client has been started
 	clientStarted bool
+	// sessionName is used to store the name of the session
+	sessionName string
 }
 
 // GetAccessToken generates and retrieves the OpenAI API access token by performing a series of authentication steps.
@@ -80,47 +81,54 @@ func (a *Auth) ExpiresIn() time.Duration {
 	return time.Until(a.expires)
 }
 
+type authCache struct {
+	AccessToken string    `json:"access_token,omitempty"`
+	Expires     time.Time `json:"expires,omitempty"`
+}
+
 func (a *Auth) cacheAccessToken() error {
-	os.Remove("gpt-cache.json")
-	cacheFile, err := os.OpenFile("gpt-cache.json", os.O_RDWR|os.O_CREATE, 0755)
+	var previousData map[string]authCache
+	if _, err := os.Stat("gpt-cache.json"); err == nil {
+		if file, err := os.Open("gpt-cache.json"); err == nil {
+			defer file.Close()
+			json.NewDecoder(file).Decode(&previousData)
+		}
+	}
+	if previousData == nil {
+		previousData = make(map[string]authCache)
+	}
+	previousData[a.sessionName] = authCache{
+		AccessToken: a.accessToken,
+		Expires:     a.expires,
+	}
+	file, err := os.Create("gpt-cache.json")
 	if err != nil {
 		return err
 	}
-	defer cacheFile.Close()
-	var to_save struct {
-		AccessToken string    `json:"access_token,omitempty"`
-		Expires     time.Time `json:"expires,omitempty"`
-	}
-
-	to_save.AccessToken = a.accessToken
-	to_save.Expires = a.expires
-
-	enc := json.NewEncoder(cacheFile)
-	return enc.Encode(to_save)
+	defer file.Close()
+	return json.NewEncoder(file).Encode(previousData)
 }
 
 func (a *Auth) loadCachedAccessToken() {
+	if _, err := os.Stat("gpt-cache.json"); err != nil {
+		return // no cache file
+	}
 	file, err := os.Open("gpt-cache.json")
 	if err != nil {
-		return // no cache file
+		return // error opening file
 	}
 	defer file.Close()
-	body, err := io.ReadAll(file)
-	if err != nil {
-		return // no cache file
+	var data map[string]authCache
+	if err := json.NewDecoder(file).Decode(&data); err != nil {
+		return // error decoding file
 	}
-	var cache struct {
-		AccessToken string    `json:"access_token,omitempty"`
-		Expires     time.Time `json:"expires,omitempty"`
+	if data == nil {
+		return // no data in file
 	}
-
-	err = json.Unmarshal(body, &cache)
-	if err != nil {
-		return // no cache file
+	if cache, ok := data[a.sessionName]; ok {
+		a.accessToken = cache.AccessToken
+		a.expires = cache.Expires
 	}
-
-	a.accessToken = cache.AccessToken
-	a.expires = cache.Expires
 }
 
 // copyCookies copies cookies from the source slice of http.Cookies to the destination http.Request.
