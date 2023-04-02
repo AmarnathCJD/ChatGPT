@@ -8,6 +8,13 @@
 
 # ChatGPT
 
+
+[![GoDoc](https://godoc.org/github.com/amarnathcjd/chatgpt?status.svg)](https://godoc.org/github.com/amarnathcjd/chatgpt)
+[![Go Report Card](https://goreportcard.com/badge/github.com/amarnathcjd/chatgpt)](https://goreportcard.com/report/github.com/amarnathcjd/chatgpt)
+[![GitHub license](https://img.shields.io/github/license/amarnathcjd/chatgpt)](nhttps://github.com/amarnathcjd/chatgpt/blob/master/LICENSE)
+[![GitHub Actions](https://github.com/tucnak/telebot/actions/workflows/go.yml/badge.svg)](https://github.com/tucnak/telebot/actions)
+[![Discuss on Telegram](https://img.shields.io/badge/telegram-discuss-0088cc.svg)](https://t.me/rosexchat)
+
 **ChatGPT** is a wrapper for the `GPT` model from OpenAI purely built on Golang. The application has various features, including asking questions and getting responses, remembering the context of the conversation, exporting the conversation to a file, and importing the conversation from a file. 
 
 The app also allows users to get the conversation history, use multiple models such as `davinci`, `gpt 3`, `gpt 3.5`, and `gpt 4`. Other features include API Key Authentication, Customizable temperature of the model, Inbuilt Tokenizer for the model, and http/https proxy support for the client. 
@@ -46,8 +53,7 @@ Below are some things that need to be added to the application:
 
 ## Documentation
 
-You can find the complete documentation for the `CHATGPT` package at [Go Reference](https://pkg.go.dev/github.com/amarnathcjd/chatgpt).
-
+You can find the complete documentation for the `CHATGPT` package at [GoDoc](https://godoc.org/github.com/amarnathcjd/chatgpt)
 ## Installation
 
 You can install ChatGPT by running the following command on your terminal:
