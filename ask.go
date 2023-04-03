@@ -71,6 +71,12 @@ type ChatResponse struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	ParentID       string `json:"parent_id,omitempty"`
 	Model          string `json:"model,omitempty"`
+	done           bool
+}
+
+// Done returns true if the chat response is done.
+func (r *ChatResponse) Done() bool {
+	return r.done
 }
 
 // ChatError represents a chat-specific error returned by this client.
@@ -90,7 +96,7 @@ func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*C
 		return nil, fmt.Errorf("client is not started, call Start() first")
 	}
 	if c.authmode == AccessTokenMode {
-		return c.AskWithAccessToken(ctx, prompt, askOpts...)
+		return c.askWithAccessToken(ctx, prompt, askOpts...)
 	}
 	var conversation Conversation
 	var conversationId string
@@ -150,6 +156,18 @@ func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*C
 		ConversationID: conversationId,
 		Model:          c.engine,
 	}, err
+}
+
+// AskStream sends a question to OpenAI API using the specified conversation ID or the default one and streams the response.
+func (c *Client) AskStream(ctx context.Context, prompt string, askOpts ...AskOpts) (chan *ChatResponse, error) {
+	if !c.auth.clientStarted {
+		return nil, fmt.Errorf("client is not started, call Start() first")
+	}
+	if c.authmode == AccessTokenMode {
+		newChannel := make(chan *ChatResponse, 60)
+		return newChannel, c.askStreamWithAccessToken(ctx, prompt, newChannel, askOpts...)
+	}
+	return nil, fmt.Errorf("streaming is not yet implemented for API key mode")
 }
 
 // askOpenAI makes a POST request to OpenAI's API with the given messages, and returns the response.
@@ -224,8 +242,8 @@ func getEngineTokenLimit(engine string) int {
 	return 4000
 }
 
-// AskWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
-func (c *Client) AskWithAccessToken(ctx context.Context, prompt string, askOpts ...AskOpts) (*ChatResponse, error) {
+// askWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
+func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts ...AskOpts) (*ChatResponse, error) {
 	_req_url := c.baseUrl + "conversation"
 
 	var conversationId string
@@ -281,17 +299,13 @@ func (c *Client) AskWithAccessToken(ctx context.Context, prompt string, askOpts 
 
 	if resp.StatusCode == http.StatusOK {
 
-		msgs, err := c.parseResponse(resp)
+		msgs, err := c.parseResponse(resp.Body, nil)
 		if err != nil {
 			return nil, err
 		}
 
 		if len(msgs) > 0 {
-			return &ChatResponse{
-				Message:        msgs[len(msgs)-1].Text,
-				ConversationID: msgs[len(msgs)-1].ConversationID,
-				ParentID:       msgs[len(msgs)-1].ParentID,
-			}, nil
+			return msgs[len(msgs)-1], nil
 		}
 	}
 
@@ -302,16 +316,95 @@ func (c *Client) AskWithAccessToken(ctx context.Context, prompt string, askOpts 
 	}
 }
 
-type RawMessage struct {
-	Text           string
-	ConversationID string
-	ParentID       string
+// askStreamWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
+func (c *Client) askStreamWithAccessToken(ctx context.Context, prompt string, ch chan *ChatResponse, askOpts ...AskOpts) error {
+	_req_url := c.baseUrl + "conversation"
+
+	var conversationId string
+	var parentId string
+
+	if len(askOpts) > 0 {
+		if askOpts[0].ConversationID != "" {
+			conversationId = askOpts[0].ConversationID
+		}
+		if askOpts[0].ParentID != "" {
+			parentId = askOpts[0].ParentID
+		}
+	}
+
+	data := map[string]interface{}{
+		"action": "next",
+		"messages": []map[string]interface{}{
+			{
+				"id":   genUUID(),
+				"role": "user",
+				"content": map[string]interface{}{
+					"content_type": "text",
+					"parts":        []string{prompt},
+				},
+			},
+		},
+		"model": c.engine,
+	}
+
+	if conversationId != "" {
+		data["conversation_id"] = conversationId
+	}
+
+	if parentId != "" {
+		data["parent_message_id"] = parentId
+	} else {
+		data["parent_message_id"] = genUUID()
+	}
+
+	payload, _ := json.Marshal(data)
+	req, err := http.NewRequestWithContext(ctx, "POST", _req_url, strings.NewReader(string(payload)))
+	if err != nil {
+		return fmt.Errorf("error in get %s: %w", _req_url, err)
+	}
+	c.setHeaders(req, c.auth.accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error in get %s: %w", _req_url, err)
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		_, err := c.parseResponse(resp.Body, ch)
+		return err
+	} else {
+		return &ChatError{Code: resp.StatusCode}
+	}
 }
 
-func (c *Client) parseResponse(response *http.Response) ([]*RawMessage, error) {
-	defer response.Body.Close()
-	messages := make([]*RawMessage, 0)
-	scanner := bufio.NewScanner(response.Body)
+// parseResponse parses the response body and returns a list of ChatResponse, or an error if the response is not valid
+func (c *Client) parseResponse(response io.ReadCloser, streamChannel chan *ChatResponse) ([]*ChatResponse, error) {
+	messages := make([]*ChatResponse, 0)
+	var err error
+	scanner := bufio.NewScanner(response)
+
+	// if { "detail": "..." } is found in first line, return error
+	if scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, `{"detail":}`) {
+			message := regexp.MustCompile(`{"detail":.*}`).FindString(line)
+			return nil, fmt.Errorf(message)
+		}
+	}
+	if streamChannel != nil {
+		go c.startScan(scanner, streamChannel, response)
+	} else {
+		messages, err = c.startScan(scanner, nil, response)
+	}
+
+	return messages, err
+}
+
+// startScan starts the scan of the response body
+// if streamChannel is not nil, it will send the messages to the channel as they are received
+func (c *Client) startScan(scanner *bufio.Scanner, streamChannel chan *ChatResponse, respBody io.ReadCloser) ([]*ChatResponse, error) {
+	var messages []*ChatResponse
+	defer respBody.Close()
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" || strings.HasPrefix(line, "event: ") {
@@ -339,19 +432,31 @@ func (c *Client) parseResponse(response *http.Response) ([]*RawMessage, error) {
 				message := fmt.Sprintf("%v", parts[0])
 				conversationID := parsedLine["conversation_id"].(string)
 				parentID := parsedLine["message"].(map[string]interface{})["id"].(string)
-				messages = append(messages, &RawMessage{
+
+				if streamChannel != nil && message != "" {
+					streamChannel <- &ChatResponse{
+						ConversationID: conversationID,
+						ParentID:       parentID,
+						Message:        strings.TrimSpace(message),
+					}
+					continue
+				}
+
+				messages = append(messages, &ChatResponse{
 					ConversationID: conversationID,
 					ParentID:       parentID,
-					Text:           message,
+					Message:        strings.TrimSpace(message),
 				})
 			}
 		} else {
 			c.logger.Warn("Unsupported message type: " + messageContextType)
 		}
 	}
+	close(streamChannel)
 	return messages, nil
 }
 
+// checkFields checks if the fields are present in the parsed line.
 func checkFields(parsedLine map[string]interface{}) bool {
 	message, messageExists := parsedLine["message"].(map[string]interface{})
 	if !messageExists {

@@ -48,19 +48,19 @@ func (a *Auth) GetAccessToken() (string, error) {
 	}
 
 	// get the callback URL after step one of authentication
-	callback_url, err := a.StepOne()
+	callback_url, err := a.stepOne()
 	if err != nil {
 		return "", err
 	}
 
 	// get the URL for step two of authentication using the obtained callback URL along with email and password
-	code_url, err := a.StepTwo(callback_url, a.email, a.password)
+	code_url, err := a.stepTwo(callback_url, a.email, a.password)
 	if err != nil {
 		return "", err
 	}
 
 	// complete the final step of authentication and fetch the response containing the access token and its expiry time
-	resp, err := a.StepThree(code_url)
+	resp, err := a.stepThree(code_url)
 	if err != nil {
 		return "", err
 	}
@@ -141,7 +141,7 @@ func (a *Auth) copyCookies(from []*http.Cookie, to *http.Request) {
 }
 
 // This function performs StepOne for authentication using the Auth struct provided
-func (a *Auth) StepOne() (string, error) {
+func (a *Auth) stepOne() (string, error) {
 
 	// Send a GET request to the authentication endpoint given and retrieve the response
 	resp, err := http.Get("https://chat.gateway.do/auth/endpoint")
@@ -174,7 +174,7 @@ func (a *Auth) StepOne() (string, error) {
 // StepTwo performs authentication using the given url, email, and password.
 // It follows redirects, sets appropriate headers and cookies, and returns the final redirect URL,
 // or an error if any occurred during the process.
-func (a *Auth) StepTwo(auth_url, _email, _password string) (string, error) {
+func (a *Auth) stepTwo(auth_url, _email, _password string) (string, error) {
 	// create an http client with required cookie settings and redirect policy
 	httpx := http.Client{
 		Jar: http.DefaultClient.Jar,
@@ -264,7 +264,7 @@ func (a *Auth) StepTwo(auth_url, _email, _password string) (string, error) {
 }
 
 // AuthResp is a struct that represents the response returned by an authentication request.
-type AuthResp struct {
+type authResp struct {
 	// AccessToken contains the access token string returned by the auth server.
 	AccessToken string `json:"accessToken"`
 	// Expires is a time.Time object representing the time when the access token will expire.
@@ -275,7 +275,7 @@ type AuthResp struct {
 
 // StepThree completes the third step of the authentication process by exchanging the authorization
 // code for an access token, using the provided callback URL.
-func (a *Auth) StepThree(code_url string) (*AuthResp, error) {
+func (a *Auth) stepThree(code_url string) (*authResp, error) {
 	// Compose the data payload for the request.
 	var data = strings.NewReader(`state=` + a.authState + `&callbackUrl=` + url.QueryEscape(code_url))
 
@@ -291,7 +291,7 @@ func (a *Auth) StepThree(code_url string) (*AuthResp, error) {
 	defer resp.Body.Close()
 
 	// Parse the response body as an AuthResp object.
-	var result AuthResp
+	var result authResp
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}

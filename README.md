@@ -43,13 +43,13 @@ Here are some notable features of the wrapper:
 - Customizable temperature of the model.
 - Inbuilt Tokenizer for the model.
 - https Proxy support for the client.
+- Support for streaming the response via a channel.
 
 ## TODO
 Below are some things that need to be added to the application:
 
 - Implement the `internet plugin` for the `GPT` model.
 - Add support for the `top_p` parameter.
-- Add support for streaming the response via a channel.
 
 ## Documentation
 
@@ -60,6 +60,11 @@ You can install ChatGPT by running the following command on your terminal:
 
 ```bash
 go get github.com/amarnathcjd/chatgpt
+```
+Or usking gopkg.in:
+
+```bash
+go get gopkg.in/chatgpt.v1
 ```
 
 ## Usage

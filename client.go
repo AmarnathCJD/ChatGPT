@@ -54,6 +54,10 @@ type Config struct {
 func NewClient(config *Config, sessionName ...string) *Client {
 	// Initialize a new client with default values, then update its fields
 	// based on the provided configuration.
+	if config == nil {
+		config = &Config{}
+	}
+
 	client := &Client{
 		auth: &Auth{
 			email:       config.Email,
@@ -96,8 +100,10 @@ func NewClient(config *Config, sessionName ...string) *Client {
 	// Set the session name if one is specified.
 	if len(sessionName) > 0 {
 		client.auth.sessionName = sessionName[0]
+		client.logger.sessionName = sessionName[0]
 	} else {
 		client.auth.sessionName = "default"
+		client.logger.sessionName = "default"
 	}
 
 	// Set up a proxy if one is specified in the configuration.
@@ -136,14 +142,16 @@ func (c *Client) SetEngine(engine string) {
 	c.engine = engine
 }
 
-// SetEnableInternet sets whether or not external websites can be accessed in responses.
-func (c *Client) SetEnableInternet(enableInternet bool) {
-	c.enableInternet = enableInternet
+// ToggleInternet toggles whether or not to allow the use of external websites in responses.
+func (c *Client) ToggleInternet(t bool) {
+	c.logger.Debug(fmt.Sprintf("Setting enableInternet to %t", t))
+	c.enableInternet = t
 }
 
-// SetStream sets whether or not response messages are streamed as they come in.
-func (c *Client) SetStream(stream bool) {
-	c.stream = stream
+// ToggleStream toggles whether or not to stream response messages as they come in.
+func (c *Client) ToggleStream(t bool) {
+	c.logger.Debug(fmt.Sprintf("Setting stream to %t", t))
+	c.stream = t
 }
 
 // SetProxy sets the proxy server to use for requests.
@@ -215,7 +223,7 @@ func (c *Client) ResetConversations() {
 }
 
 // PingProxy checks if the proxy server is reachable.
-func (c *Client) PingProxy() error {
+func (c *Client) pingProxy() error {
 	if c.proxy == nil {
 		return fmt.Errorf("no proxy server set")
 	}
@@ -230,7 +238,7 @@ func (c *Client) PingProxy() error {
 //	 1. API key
 //	 2. Email and password
 //	 3. Access token
-func (c *Client) CheckCredentials() error {
+func (c *Client) checkCredentials() error {
 	if c.auth.apiKey == "" && (c.auth.email == "" || c.auth.password == "") && c.auth.accessToken == "" {
 		return fmt.Errorf("no credentials provided, please set an API key, email and password, or access token")
 	}
@@ -244,14 +252,14 @@ func (c *Client) CheckCredentials() error {
 func (c *Client) Start() error {
 	// Check that the client has been initialized with credentials.
 	c.auth.loadCachedAccessToken()
-	if err := c.CheckCredentials(); err != nil {
+	if err := c.checkCredentials(); err != nil {
 		return err
 	}
 
 	if c.proxy != nil {
 		// check if proxy is alive, ping it
 		// if not, return error
-		if err := c.PingProxy(); err != nil {
+		if err := c.pingProxy(); err != nil {
 			return err
 		}
 		c.logger.Debug("Proxy server is alive")
