@@ -71,15 +71,9 @@ type ChatResponse struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	ParentID       string `json:"parent_id,omitempty"`
 	Model          string `json:"model,omitempty"`
-	done           bool
 }
 
-// Done returns true if the chat response is done.
-func (r *ChatResponse) Done() bool {
-	return r.done
-}
-
-// ChatError represents a chat-specific error returned by this client.
+// ChatError represents a chat/auth-specific error returned by this client.
 type ChatError struct {
 	Message string `json:"message,omitempty"`
 	Code    int    `json:"code,omitempty"`
@@ -87,7 +81,11 @@ type ChatError struct {
 
 // Error returns the string representation of a ChatError.
 func (e *ChatError) Error() string {
-	return e.Message + " (code: " + strconv.Itoa(e.Code) + ")"
+	var message struct {
+		Detail string `json:"detail"`
+	}
+	json.Unmarshal([]byte(e.Message), &message)
+	return "chatgpt error: " + message.Detail + " (error code " + strconv.Itoa(e.Code) + ")"
 }
 
 // Ask sends a question to OpenAI API using the specified conversation ID or the default one.
@@ -160,14 +158,106 @@ func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*C
 
 // AskStream sends a question to OpenAI API using the specified conversation ID or the default one and streams the response.
 func (c *Client) AskStream(ctx context.Context, prompt string, askOpts ...AskOpts) (chan *ChatResponse, error) {
+	// Check if the client has been started and is using access token mode
 	if !c.auth.clientStarted {
 		return nil, fmt.Errorf("client is not started, call Start() first")
 	}
 	if c.authmode == AccessTokenMode {
+		// Create a new channel for the response messages
 		newChannel := make(chan *ChatResponse, 60)
+
+		// Call the askStreamWithAccessToken method to send the question and stream the response
 		return newChannel, c.askStreamWithAccessToken(ctx, prompt, newChannel, askOpts...)
 	}
+	// If the client is not using access token mode, return an error
 	return nil, fmt.Errorf("streaming is not yet implemented for API key mode")
+}
+
+// AskInternet sends a question to the specified internet engine and returns the response/error.
+func (c *Client) AskInternet(ctx context.Context, prompt string) (*ChatResponse, error) {
+	// Check if the client has been started
+	if !c.auth.clientStarted {
+		return nil, fmt.Errorf("client is not started, call Start() first")
+	}
+
+	// Format the prompt as a query to an internet search engine.
+	query_fmt := "This is a prompt from a user to a chatbot: '%s'. Respond with 'none' if it is directed at the chatbot or cannot be answered by an internet search. Otherwise, respond with a possible search query to a search engine. Do not write any additional text. Make it as minimal as possible"
+
+	// Send the prompt to the ChatGPT engine and get a response.
+	response, err := c.Ask(ctx, fmt.Sprintf(query_fmt, prompt))
+	if err != nil {
+		return nil, err
+	}
+
+	// If the response is "none", return an error indicating that an internet search query could not be found.
+	if response.Message == "none" {
+		return nil, fmt.Errorf("no internet search query found")
+	}
+
+	// Otherwise, send the response to an internet search engine and return the resulting snippet as the response.
+	response.Message, err = c.askInternet(ctx, response.Message)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
+// InternetResponse is a slice of structs representing search results obtained from an internet search engine.
+type InternetResponse []struct {
+	// The title of the search result.
+	Title string `json:"title"`
+
+	// The URL of the search result.
+	Link string `json:"link"`
+
+	// A brief snippet of text from the search result.
+	Snippet string `json:"snippet"`
+}
+
+// askInternet queries the internet using the specified query and returns the response or an error.
+func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, error) {
+	// Remove any prefix indicating that the query is a search query.
+	query_fmt = strings.ReplaceAll(query_fmt, "Possible search query: ", "")
+
+	// Set the URL and payload for the external search API.
+	query_url := "https://ddg-api.herokuapp.com/search"
+	var query_payload struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	query_payload.Query = query_fmt
+	query_payload.Limit = 1
+
+	// Marshal the query payload to JSON and create an HTTP request with the JSON payload.
+	query_json, _ := json.Marshal(query_payload)
+	req, _ := http.NewRequestWithContext(ctx, "POST", query_url, strings.NewReader(string(query_json)))
+	req.Header.Add("Content-Type", "application/json")
+
+	// Send the request and handle the response.
+	if resp, err := c.httpx.Do(req); err != nil {
+		// If there is an error sending the request, return the error.
+		return "", err
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			// If the response status code is not 200 (OK), parse the error response from the API and return a ChatError.
+			var errResp struct {
+				Error string `json:"error"`
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if err := json.Unmarshal(respBody, &errResp); err != nil {
+				return "", fmt.Errorf("error: %s", resp.Status)
+			}
+			return "", &ChatError{errResp.Error, resp.StatusCode}
+		}
+		// If the response status code is 200, parse the response body as an InternetResponse and return the snippet from the first search result.
+		respBody, _ := io.ReadAll(resp.Body)
+		var response InternetResponse
+		if err := json.Unmarshal(respBody, &response); err != nil {
+			return "", fmt.Errorf("error: %s", resp.Status)
+		}
+		return response[0].Snippet, nil
+	}
 }
 
 // askOpenAI makes a POST request to OpenAI's API with the given messages, and returns the response.
@@ -206,10 +296,17 @@ func (c *Client) askOpenAI(ctx context.Context, messages []Message, streamChanne
 
 // Payload represents the structure of the JSON payload sent by askOpenAI.
 type Payload struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature float64   `json:"temperature"`
-	TopP        float64   `json:"top_p"`
+	// The ID of the OpenAI model to use for the request.
+	Model string `json:"model"`
+
+	// An array of Message structs representing the conversation so far.
+	Messages []Message `json:"messages"`
+
+	// The "temperature" parameter controls the "creativity" of the AI's responses. Higher values will generate more diverse and unexpected responses.
+	Temperature float64 `json:"temperature"`
+
+	// The "top-p" parameter controls the "conservatism" of the AI's responses. Lower values will generate more predictable and "safe" responses.
+	TopP float64 `json:"top_p"`
 }
 
 // makePayload returns the JSON payload for the given messages with the client's settings.
@@ -230,25 +327,24 @@ func (c *Client) setHeaders(req *http.Request, key string) {
 	req.Header.Set("Content-Type", "application/json")
 }
 
-// getEngineTokenLimit retrieves the maximum token limit for the given engine.
-// It searches through ENGINES to find the one that matches the engine prefix in the client's settings.
-// If no match is found, a default limit of 4000 tokens is used.
+// getEngineTokenLimit returns the maximum number of tokens that can be sent to the OpenAI API for a given engine.
 func getEngineTokenLimit(engine string) int {
-	for a, e := range Engines {
-		if strings.Contains(engine, a) {
-			return e
-		}
+	// If the engine is "gpt-4-32k", return a limit of 32000 tokens.
+	if engine == "gpt-4-32k" {
+		return 32000
+	} else if engine == "gpt-4" { // If the engine is "gpt-4", return a limit of 8000 tokens.
+		return 8000
+	} else {
+		return 4000 // default to 4000 tokens
 	}
-	return 4000
 }
 
 // askWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
 func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts ...AskOpts) (*ChatResponse, error) {
-	_req_url := c.baseUrl + "conversation"
-
 	var conversationId string
 	var parentId string
 
+	// Parse the conversation ID and parent ID from the askOpts parameter, if provided
 	if len(askOpts) > 0 {
 		if askOpts[0].ConversationID != "" {
 			conversationId = askOpts[0].ConversationID
@@ -258,6 +354,7 @@ func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts 
 		}
 	}
 
+	// Construct the payload for the POST request
 	data := map[string]interface{}{
 		"action": "next",
 		"messages": []map[string]interface{}{
@@ -273,6 +370,7 @@ func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts 
 		"model": c.engine,
 	}
 
+	// Add the conversation ID and parent ID to the payload, if provided
 	if conversationId != "" {
 		data["conversation_id"] = conversationId
 	}
@@ -283,22 +381,27 @@ func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts 
 		data["parent_message_id"] = genUUID()
 	}
 
+	// Convert the payload to JSON and create a new HTTP request
 	payload, _ := json.Marshal(data)
-	req, err := http.NewRequestWithContext(ctx, "POST", _req_url, strings.NewReader(string(payload)))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseUrl, strings.NewReader(string(payload)))
 	if err != nil {
-		return nil, fmt.Errorf("error in get %s: %w", _req_url, err)
+		return nil, fmt.Errorf("system error: %w", err)
 	}
+
+	// Set the authorization header using the access token
 	c.setHeaders(req, c.auth.accessToken)
 
+	// Send the HTTP request and handle the response
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error in get %s: %w", _req_url, err)
+		return nil, fmt.Errorf("system error: %w", err)
 	}
 
+	// Close the response body when we're done with it
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-
+		// Parse the response body and return the last message in the conversation
 		msgs, err := c.parseResponse(resp.Body, nil)
 		if err != nil {
 			return nil, err
@@ -309,20 +412,17 @@ func (c *Client) askWithAccessToken(ctx context.Context, prompt string, askOpts 
 		}
 	}
 
+	// If the API returned an error, return a ChatError containing the error message and HTTP status code
 	body, _ := io.ReadAll(resp.Body)
-	return nil, &ChatError{
-		Message: string(body),
-		Code:    resp.StatusCode,
-	}
+	return nil, &ChatError{Message: string(body), Code: resp.StatusCode}
 }
 
 // askStreamWithAccessToken sends a question to Custom API using the specified conversation ID or the default one.
 func (c *Client) askStreamWithAccessToken(ctx context.Context, prompt string, ch chan *ChatResponse, askOpts ...AskOpts) error {
-	_req_url := c.baseUrl + "conversation"
-
 	var conversationId string
 	var parentId string
 
+	// Parse the conversation ID and parent ID from the askOpts parameter, if provided
 	if len(askOpts) > 0 {
 		if askOpts[0].ConversationID != "" {
 			conversationId = askOpts[0].ConversationID
@@ -332,6 +432,7 @@ func (c *Client) askStreamWithAccessToken(ctx context.Context, prompt string, ch
 		}
 	}
 
+	// Construct the payload for the POST request
 	data := map[string]interface{}{
 		"action": "next",
 		"messages": []map[string]interface{}{
@@ -347,6 +448,7 @@ func (c *Client) askStreamWithAccessToken(ctx context.Context, prompt string, ch
 		"model": c.engine,
 	}
 
+	// Add the conversation ID and parent ID to the payload, if provided
 	if conversationId != "" {
 		data["conversation_id"] = conversationId
 	}
@@ -357,33 +459,42 @@ func (c *Client) askStreamWithAccessToken(ctx context.Context, prompt string, ch
 		data["parent_message_id"] = genUUID()
 	}
 
+	// Convert the payload to JSON and create a new HTTP request
 	payload, _ := json.Marshal(data)
-	req, err := http.NewRequestWithContext(ctx, "POST", _req_url, strings.NewReader(string(payload)))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseUrl, strings.NewReader(string(payload)))
 	if err != nil {
-		return fmt.Errorf("error in get %s: %w", _req_url, err)
+		return fmt.Errorf("system error: %w", err)
 	}
+
+	// Set the authorization header using the access token
 	c.setHeaders(req, c.auth.accessToken)
 
+	// Send the HTTP request and handle the response
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("error in get %s: %w", _req_url, err)
+		return fmt.Errorf("system error: %w", err)
 	}
 
 	if resp.StatusCode == http.StatusOK {
+		// Parse the response body and send any messages to the channel
 		_, err := c.parseResponse(resp.Body, ch)
 		return err
 	} else {
+		// Return a ChatError containing the HTTP status code
 		return &ChatError{Code: resp.StatusCode}
 	}
 }
 
 // parseResponse parses the response body and returns a list of ChatResponse, or an error if the response is not valid
 func (c *Client) parseResponse(response io.ReadCloser, streamChannel chan *ChatResponse) ([]*ChatResponse, error) {
+	// Create an empty slice to store ChatResponse objects
 	messages := make([]*ChatResponse, 0)
 	var err error
+
+	// Create a scanner to read the response body
 	scanner := bufio.NewScanner(response)
 
-	// if { "detail": "..." } is found in first line, return error
+	// If the first line contains {"detail": }, return an error
 	if scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, `{"detail":}`) {
@@ -391,12 +502,16 @@ func (c *Client) parseResponse(response io.ReadCloser, streamChannel chan *ChatR
 			return nil, fmt.Errorf(message)
 		}
 	}
+
+	// If streamChannel is not nil, start scanning the response body in a separate goroutine
 	if streamChannel != nil {
 		go c.startScan(scanner, streamChannel, response)
 	} else {
+		// Otherwise, scan the response body synchronously and store the messages in the messages slice
 		messages, err = c.startScan(scanner, nil, response)
 	}
 
+	// Return the messages slice and any errors
 	return messages, err
 }
 
@@ -405,34 +520,53 @@ func (c *Client) parseResponse(response io.ReadCloser, streamChannel chan *ChatR
 func (c *Client) startScan(scanner *bufio.Scanner, streamChannel chan *ChatResponse, respBody io.ReadCloser) ([]*ChatResponse, error) {
 	var messages []*ChatResponse
 	defer respBody.Close()
+
+	// Loop through each line in the response body
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Skip empty lines and lines that start with "event: "
 		if line == "" || strings.HasPrefix(line, "event: ") {
 			continue
 		}
+
+		// Skip lines that do not start with "data: "
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
+
+		// Handle error messages that contain {"detail": }
 		if strings.Contains(line, `{"detail":}`) {
 			message := regexp.MustCompile(`{"detail":.*}`).FindString(line)
 			return nil, fmt.Errorf(message)
 		}
+
+		// Remove "data: " prefix from line
 		line = strings.TrimPrefix(line, "data: ")
+
+		// Stop scanning if line is "[DONE]"
 		if line == "[DONE]" {
 			break
 		}
+
+		// Parse the line as JSON and check if it contains the necessary fields
 		var parsedLine map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &parsedLine); err != nil || !checkFields(parsedLine) {
 			continue
 		}
+
+		// Extract message content and check if it is of type "text"
 		content := parsedLine["message"].(map[string]interface{})["content"].(map[string]interface{})
 		if messageContextType, ok := content["content_type"].(string); ok && messageContextType == "text" {
 			parts := content["parts"].([]interface{})
+
+			// Only process messages that have at least one part
 			if len(parts) > 0 {
 				message := fmt.Sprintf("%v", parts[0])
 				conversationID := parsedLine["conversation_id"].(string)
 				parentID := parsedLine["message"].(map[string]interface{})["id"].(string)
 
+				// If streamChannel is not nil, send the message to the channel
 				if streamChannel != nil && message != "" {
 					streamChannel <- &ChatResponse{
 						ConversationID: conversationID,
@@ -442,6 +576,7 @@ func (c *Client) startScan(scanner *bufio.Scanner, streamChannel chan *ChatRespo
 					continue
 				}
 
+				// Add the message to the messages slice
 				messages = append(messages, &ChatResponse{
 					ConversationID: conversationID,
 					ParentID:       parentID,
@@ -449,27 +584,36 @@ func (c *Client) startScan(scanner *bufio.Scanner, streamChannel chan *ChatRespo
 				})
 			}
 		} else {
+			// Log a warning for unsupported message types
 			c.logger.Warn("Unsupported message type: " + messageContextType)
 		}
 	}
-	close(streamChannel)
+
+	// Close the streamChannel and return the messages slice
+	if streamChannel != nil {
+		close(streamChannel)
+	}
 	return messages, nil
 }
 
-// checkFields checks if the fields are present in the parsed line.
+// checkFields checks if the necessary fields exist in the parsed line map
 func checkFields(parsedLine map[string]interface{}) bool {
+	// Check if "message" field exists in parsedLine map
 	message, messageExists := parsedLine["message"].(map[string]interface{})
 	if !messageExists {
 		return false
 	}
+	// Check if "content" field exists in "message" map
 	content, contentExists := message["content"].(map[string]interface{})
 	if !contentExists {
 		return false
 	}
+	// Check if "parts" field exists in "content" map
 	parts, partsExists := content["parts"].([]interface{})
 	if !partsExists {
 		return false
 	}
+	// Check if "parts" slice is not empty
 	if len(parts) == 0 {
 		return false
 	}

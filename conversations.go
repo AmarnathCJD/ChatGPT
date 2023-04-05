@@ -2,20 +2,6 @@ package chatgpt
 
 import "encoding/json"
 
-const (
-	TextDavinciEngine = "text-davinci-"
-	Gpt3_5Engine      = "gpt-3.5-"
-	Gpt4_32Engine     = "gpt-4-32"
-	Gpt4_8Engine      = "gpt-4-8"
-)
-
-var Engines = map[string]int{
-	TextDavinciEngine: 4000,
-	Gpt3_5Engine:      4000,
-	Gpt4_32Engine:     32000,
-	Gpt4_8Engine:      8000,
-}
-
 // Message represents a struct with two fields: Role and Content.
 type Message struct {
 	Role    string `json:"role,omitempty"`    // Tag defies the JSON key name as "role" or omits the key if the value is empty.

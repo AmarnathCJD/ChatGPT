@@ -220,9 +220,9 @@ func (a *Auth) stepTwo(auth_url, _email, _password string) (string, error) {
 	// check for correct status code, and handle incorrect email/password combination error if received
 	if resp.StatusCode != 302 {
 		if resp.StatusCode == 400 {
-			return "", fmt.Errorf("email or password combination is incorrect (%d)", resp.StatusCode)
+			return "", &ChatError{"email and password combination is incorrect or you have not verified your email address yet", 400}
 		}
-		return "", fmt.Errorf("bad status for url: %s", next_url)
+		return "", &ChatError{"bad status for url: " + next_url, resp.StatusCode}
 	}
 
 	// extract next URL from the response header and update the form data with provided password
@@ -243,7 +243,10 @@ func (a *Auth) stepTwo(auth_url, _email, _password string) (string, error) {
 
 	// check for correct status code after performing final redirect
 	if resp.StatusCode != 302 {
-		return "", fmt.Errorf("bad status for url: %s", next_url)
+		if resp.StatusCode == 400 {
+			return "", &ChatError{"email and password combination is incorrect or you have not verified your email address yet", 400}
+		}
+		return "", &ChatError{"bad status for url: " + next_url, resp.StatusCode}
 	}
 
 	// extract the final redirect URL and return it
@@ -258,7 +261,7 @@ func (a *Auth) stepTwo(auth_url, _email, _password string) (string, error) {
 
 	// check for correct status code after visiting the final URL
 	if resp.StatusCode != 302 {
-		return "", fmt.Errorf("bad status for url: %s", next_url)
+		return "", &ChatError{"bad status for url: " + next_url, resp.StatusCode}
 	}
 	return resp.Header.Get("Location"), nil
 }

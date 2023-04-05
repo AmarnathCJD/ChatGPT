@@ -72,7 +72,7 @@ go get gopkg.in/chatgpt.v1
 Here is an example of how to use ChatGPT package:
 
 ```go
-package main
+package chatgpt
 
 import (
     "fmt"

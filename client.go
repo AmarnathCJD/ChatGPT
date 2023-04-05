@@ -87,7 +87,7 @@ func NewClient(config *Config, sessionName ...string) *Client {
 	}
 	// set the default base URL if one is not specified in the configuration.
 	if client.baseUrl == "" {
-		client.baseUrl = "https://bypass.churchless.tech/api/"
+		client.baseUrl = "https://bypass.churchless.tech/api/conversation"
 	}
 
 	// Set the log level if one is specified in the configuration.
@@ -340,27 +340,27 @@ func (l *Logger) SessionName() string {
 // Debug logs a debug message.
 func (l *Logger) Debug(msg string) {
 	if l.Level <= LogLevelDebug {
-		log.Println("chatGPT ", l.SessionName(), " - Debug - ", msg)
+		log.Printf("chatgpt%s - Debug - %s", l.SessionName(), msg)
 	}
 }
 
 // Info logs an informational message.
 func (l *Logger) Info(msg string) {
 	if l.Level <= LogLevelInfo {
-		log.Println("chatGPT ", l.SessionName(), " - Info - ", msg)
+		log.Printf("chatgpt%s - Info - %s", l.SessionName(), msg)
 	}
 }
 
 // Warn logs a warning message.
 func (l *Logger) Warn(msg string) {
 	if l.Level <= LogLevelWarn {
-		log.Println("chatGPT ", l.SessionName(), " - Warn - ", msg)
+		log.Printf("chatgpt%s - Warn - %s", l.SessionName(), msg)
 	}
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string) {
 	if l.Level <= LogLevelError {
-		log.Println("chatGPT ", l.SessionName(), " - Error - ", msg)
+		log.Printf("chatgpt%s - Error - %s", l.SessionName(), msg)
 	}
 }
