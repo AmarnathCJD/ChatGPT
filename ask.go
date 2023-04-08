@@ -122,7 +122,7 @@ func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*C
 			initMessage.Content = c.initMessage
 		}
 		conversation.initMessage(initMessage)
-                conversation.addMessage(Message{
+		conversation.addMessage(Message{
 			Role:    "user",
 			Content: prompt,
 		}) // add current message to the conversation flow
@@ -203,6 +203,10 @@ func (c *Client) AskInternet(ctx context.Context, prompt string) (*ChatResponse,
 	if err != nil {
 		return nil, err
 	}
+	response, err = c.Ask(ctx, response.Message)
+	if err != nil {
+		return nil, err
+	}
 	return response, nil
 }
 
@@ -230,7 +234,7 @@ func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, err
 		Limit int    `json:"limit"`
 	}
 	query_payload.Query = query_fmt
-	query_payload.Limit = 1
+	query_payload.Limit = 5
 
 	// Marshal the query payload to JSON and create an HTTP request with the JSON payload.
 	query_json, _ := json.Marshal(query_payload)
@@ -260,7 +264,12 @@ func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, err
 		if err := json.Unmarshal(respBody, &response); err != nil {
 			return "", fmt.Errorf("error: %s", resp.Status)
 		}
-		return response[0].Snippet, nil
+		snippets := make([]string, 0)
+		for _, result := range response {
+			snippets = append(snippets, result.Snippet)
+		}
+		query_fmt = fmt.Sprintf("This snippets are from a search engine: %s. formulate an answer solely based on the snippets for the prompt: '%s', and respond with the answer. (also imagine the source name to be 'Internet')", strings.Join(snippets, ", "), query_fmt)
+		return query_fmt, nil
 	}
 }
 
