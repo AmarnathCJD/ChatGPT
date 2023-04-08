@@ -122,6 +122,10 @@ func (c *Client) Ask(ctx context.Context, prompt string, askOpts ...AskOpts) (*C
 			initMessage.Content = c.initMessage
 		}
 		conversation.initMessage(initMessage)
+                conversation.addMessage(Message{
+			Role:    "user",
+			Content: prompt,
+		}) // add current message to the conversation flow
 		c.conversations[conversationId] = conversation
 	} else { // Otherwise, retrieve the existing conversation and add the user's message to it.
 		conversation = c.conversations[conversationId]
