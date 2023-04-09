@@ -199,7 +199,7 @@ func (c *Client) AskInternet(ctx context.Context, prompt string) (*ChatResponse,
 	}
 
 	// Otherwise, send the response to an internet search engine and return the resulting snippet as the response.
-	response.Message, err = c.askInternet(ctx, response.Message)
+	response.Message, err = c.askInternet(ctx, prompt, response.Message)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ type InternetResponse []struct {
 }
 
 // askInternet queries the internet using the specified query and returns the response or an error.
-func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, error) {
+func (c *Client) askInternet(ctx context.Context, actual_qn, query_fmt string) (string, error) {
 	// Remove any prefix indicating that the query is a search query.
 	query_fmt = strings.ReplaceAll(query_fmt, "Possible search query: ", "")
 
@@ -234,7 +234,7 @@ func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, err
 		Limit int    `json:"limit"`
 	}
 	query_payload.Query = query_fmt
-	query_payload.Limit = 5
+	query_payload.Limit = 3
 
 	// Marshal the query payload to JSON and create an HTTP request with the JSON payload.
 	query_json, _ := json.Marshal(query_payload)
@@ -268,7 +268,7 @@ func (c *Client) askInternet(ctx context.Context, query_fmt string) (string, err
 		for _, result := range response {
 			snippets = append(snippets, result.Snippet)
 		}
-		query_fmt = fmt.Sprintf("This snippets are from a search engine: %s. formulate an answer solely based on the snippets for the prompt: '%s', and respond with the answer. (also imagine the source name to be 'Internet')", strings.Join(snippets, ", "), query_fmt)
+		query_fmt = fmt.Sprintf("Here is the piece of data: %s, formulate an answer to the prompt in chatgpt style for the prompt: %s based solely on the data provided. dont mention anything about the source of the answer in answer, also try to minimise the length of answer as far as possible, if necessary split answer into paragraphs", strings.Join(snippets, " "), query_fmt)
 		return query_fmt, nil
 	}
 }
