@@ -144,7 +144,7 @@ func (a *Auth) copyCookies(from []*http.Cookie, to *http.Request) {
 func (a *Auth) stepOne() (string, error) {
 
 	// Send a GET request to the authentication endpoint given and retrieve the response
-	resp, err := http.Get("https://chat.gateway.do/auth/endpoint")
+	resp, err := http.Get("https://chat-api.zhile.io/auth/endpoint")
 	if err != nil {
 		return "", err
 	}
@@ -283,7 +283,7 @@ func (a *Auth) stepThree(code_url string) (*authResp, error) {
 	var data = strings.NewReader(`state=` + a.authState + `&callbackUrl=` + url.QueryEscape(code_url))
 
 	// Create a new HTTP POST request object with the appropriate endpoint URL and data payload.
-	req, _ := http.NewRequest("POST", "https://chat.gateway.do/auth/token", data)
+	req, _ := http.NewRequest("POST", "https://chat-api.zhile.io/auth/token", data)
 	req.Header.Set("content-type", "application/x-www-form-urlencoded")
 
 	// Send the request and obtain the response.

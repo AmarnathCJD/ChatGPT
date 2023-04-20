@@ -87,7 +87,7 @@ func NewClient(config *Config, sessionName ...string) *Client {
 	}
 	// set the default base URL if one is not specified in the configuration.
 	if client.baseUrl == "" {
-		client.baseUrl = "https://bypass.churchless.tech/api/conversation"
+		client.baseUrl = "https://chat-api.zhile.io/api/conversation"
 	}
 
 	// Set the log level if one is specified in the configuration.
