@@ -49,6 +49,9 @@ type OpenAIResponse struct {
 // GetResponse returns the response message from the OpenAI API response.
 
 func (r *OpenAIResponse) GetResponse() string {
+        if r.Choices == nil {
+                return "malformed response"
+        }
 	if len(r.Choices) == 0 {
 		return ""
 	}
