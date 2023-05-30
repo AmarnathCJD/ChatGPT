@@ -49,6 +49,9 @@ type OpenAIResponse struct {
 // GetResponse returns the response message from the OpenAI API response.
 
 func (r *OpenAIResponse) GetResponse() string {
+	if r.Choices == nil {
+		return "malformed response"
+	}
 	if len(r.Choices) == 0 {
 		return ""
 	}
@@ -510,7 +513,7 @@ func (c *Client) parseResponse(response io.ReadCloser, streamChannel chan *ChatR
 	// If the first line contains {"detail": }, return an error
 	if scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, `{"detail":}`) {
+		if strings.Contains(line, `{"detail":`) {
 			message := regexp.MustCompile(`{"detail":.*}`).FindString(line)
 			return nil, fmt.Errorf(message)
 		}
@@ -549,7 +552,7 @@ func (c *Client) startScan(scanner *bufio.Scanner, streamChannel chan *ChatRespo
 		}
 
 		// Handle error messages that contain {"detail": }
-		if strings.Contains(line, `{"detail":}`) {
+		if strings.Contains(line, `{"detail":`) {
 			message := regexp.MustCompile(`{"detail":.*}`).FindString(line)
 			return nil, fmt.Errorf(message)
 		}
