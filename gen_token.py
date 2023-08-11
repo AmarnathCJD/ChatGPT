@@ -28,7 +28,7 @@ def get_access_token(email: str, password: str):
     startT = time.time()
     driver = uc.Chrome(
         headless=True,
-        version_main=108,
+        version_main=114,
     )
     driver.get('https://chat.openai.com/auth/login')
 
